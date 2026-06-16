@@ -42,6 +42,12 @@ export function initMarkets(nord: Nord): void {
   index(nord.markets);
 }
 
+export function initMarketsOffline(metas: MarketMeta[]): void {
+  _markets = metas;
+  _bySymbol = new Map(metas.map((m) => [m.symbol, m]));
+  _byId = new Map(metas.map((m) => [m.marketId, m]));
+}
+
 export async function refreshMarkets(nord: Nord): Promise<void> {
   await nord.fetchNordInfo();
   index(nord.markets);

@@ -25,6 +25,20 @@ export interface LocalBook {
   lastUpdateMs: number;
 }
 
+/** Max key without `Math.max(...map.keys())` — avoids the O(n) array spread allocation. */
+export function maxKey(m: Map<number, number>): number {
+  let max = -Infinity;
+  for (const k of m.keys()) if (k > max) max = k;
+  return max;
+}
+
+/** Min key without `Math.min(...map.keys())` — avoids the O(n) array spread allocation. */
+export function minKey(m: Map<number, number>): number {
+  let min = Infinity;
+  for (const k of m.keys()) if (k < min) min = k;
+  return min;
+}
+
 export interface FeedOptions {
   trades?: string[];
   deltas?: string[];
@@ -283,8 +297,8 @@ export class LiveFeed extends EventEmitter {
       if (s === 0) { book.asks.delete(p); if (p <= book.bestAsk) askDirty = true; }
       else { book.asks.set(p, s); if (p < book.bestAsk) { book.bestAsk = p; askDirty = false; } }
     }
-    if (bidDirty) book.bestBid = book.bids.size ? Math.max(...book.bids.keys()) : -Infinity;
-    if (askDirty) book.bestAsk = book.asks.size ? Math.min(...book.asks.keys()) : Infinity;
+    if (bidDirty) book.bestBid = book.bids.size ? maxKey(book.bids) : -Infinity;
+    if (askDirty) book.bestAsk = book.asks.size ? minKey(book.asks) : Infinity;
     book.updateId = delta.update_id;
     book.lastUpdateMs = nowMs;
   }
@@ -309,8 +323,8 @@ export class LiveFeed extends EventEmitter {
       const book: LocalBook = {
         symbol, updateId: snap.updateId, synced: false, lastUpdateMs: now,
         bids: bidMap, asks: askMap,
-        bestBid: bidMap.size ? Math.max(...bidMap.keys()) : -Infinity,
-        bestAsk: askMap.size ? Math.min(...askMap.keys()) : Infinity,
+        bestBid: bidMap.size ? maxKey(bidMap) : -Infinity,
+        bestAsk: askMap.size ? minKey(askMap) : Infinity,
       };
 
       let applied = 0;

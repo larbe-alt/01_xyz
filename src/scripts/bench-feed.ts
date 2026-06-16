@@ -9,8 +9,8 @@ import { performance } from "node:perf_hooks";
 const log = createLogger("bench-feed");
 const SYMBOL = process.argv[2] || "BTCUSD";
 
-function stats(samples: number[]) {
-  if (!samples.length) return null;
+function stats(samples: number[]): Record<string, unknown> {
+  if (!samples.length) return { count: 0 };
   samples.sort((a, b) => a - b);
   return {
     count: samples.length,

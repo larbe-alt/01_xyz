@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "features": [
+    {
+      "name": "spread_bps",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "description": "(bestAsk - bestBid) / mid * 10000"
+    },
+    {
+      "name": "microprice",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "description": "(bestBid * askQty1 + bestAsk * bidQty1) / (bidQty1 + askQty1)"
+    },
+    {
+      "name": "book_imbalance_1",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 1 },
+      "description": "(bidQty - askQty) / (bidQty + askQty) at top 1 level"
+    },
+    {
+      "name": "book_imbalance_5",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 5 },
+      "description": "(bidQty - askQty) / (bidQty + askQty) at top 5 levels"
+    },
+    {
+      "name": "depth_bid_5",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 5 },
+      "description": "cumulative bid size across top 5 levels"
+    },
+    {
+      "name": "depth_ask_5",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 5 },
+      "description": "cumulative ask size across top 5 levels"
+    },
+    {
+      "name": "depth_ratio_5",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 5 },
+      "description": "depth_bid_5 / depth_ask_5"
+    },
+    {
+      "name": "wap_distance_bps",
+      "category": "microstructure",
+      "inputs": ["book"],
+      "window": null,
+      "params": { "levels": 5 },
+      "description": "(vwap_ask_5 - vwap_bid_5) / mid * 10000 — effective spread of top-5 depth"
+    },
+    {
+      "name": "trade_imbalance_60s",
+      "category": "trade_flow",
+      "inputs": ["trades"],
+      "window": 60000,
+      "description": "(buyVol - sellVol) / (buyVol + sellVol) over 60s"
+    },
+    {
+      "name": "trade_intensity_60s",
+      "category": "trade_flow",
+      "inputs": ["trades"],
+      "window": 60000,
+      "description": "trade count per second over 60s"
+    },
+    {
+      "name": "avg_trade_size_60s",
+      "category": "trade_flow",
+      "inputs": ["trades"],
+      "window": 60000,
+      "description": "mean trade size (base) over 60s"
+    },
+    {
+      "name": "ofi_60s",
+      "category": "trade_flow",
+      "inputs": ["book", "trades"],
+      "window": 60000,
+      "description": "order flow imbalance: net signed trade volume weighted by price impact"
+    },
+    {
+      "name": "realized_vol_300s",
+      "category": "volatility",
+      "inputs": ["trades"],
+      "window": 300000,
+      "description": "realized volatility of mid from trade prices over 5min, annualized"
+    },
+    {
+      "name": "return_10s",
+      "category": "volatility",
+      "inputs": ["trades"],
+      "window": 10000,
+      "description": "log return of mid over last 10s"
+    },
+    {
+      "name": "return_60s",
+      "category": "volatility",
+      "inputs": ["trades"],
+      "window": 60000,
+      "description": "log return of mid over last 60s"
+    }
+  ],
+  "labels": [
+    {
+      "name": "fwd_return_1s",
+      "horizon": 1000,
+      "description": "mid-price return over next 1s"
+    },
+    {
+      "name": "fwd_return_5s",
+      "horizon": 5000,
+      "description": "mid-price return over next 5s"
+    },
+    {
+      "name": "fwd_return_30s",
+      "horizon": 30000,
+      "description": "mid-price return over next 30s"
+    },
+    {
+      "name": "fwd_return_sign_5s",
+      "horizon": 5000,
+      "description": "sign of mid-price return over next 5s (1 = up, 0 = down)"
+    }
+  ]
+}

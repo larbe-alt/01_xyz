@@ -1,0 +1,35 @@
+{
+  "$comment": "Schema for exported tree-ensemble models. The TS inference adapter evaluates this directly — no ONNX runtime needed.",
+  "version": 1,
+  "example": {
+    "version": 1,
+    "model_type": "gbdt",
+    "objective": "binary_crossentropy",
+    "feature_names": ["spread_bps", "microprice", "book_imbalance_1"],
+    "base_score": 0.0,
+    "learning_rate": 0.1,
+    "trees": [
+      {
+        "nodes": [
+          { "f": 0, "t": 3.5, "l": 1, "r": 2 },
+          { "v": 0.1 },
+          { "f": 2, "t": 0.0, "l": 3, "r": 4 },
+          { "v": -0.05 },
+          { "v": 0.2 }
+        ]
+      }
+    ],
+    "metadata": {
+      "trained_on": "ETHUSD",
+      "train_start": 1700000000000,
+      "train_end": 1700086400000,
+      "n_samples": 50000,
+      "feature_importance": { "spread_bps": 0.4, "microprice": 0.35, "book_imbalance_1": 0.25 }
+    }
+  },
+  "node_format": {
+    "split_node": "{ f: feature_index, t: threshold, l: left_child_index, r: right_child_index }",
+    "leaf_node": "{ v: leaf_value }",
+    "evaluation": "start at node 0; if feature[f] <= t go to nodes[l] else nodes[r]; stop at leaf; sum leaf values across trees; apply sigmoid for classification"
+  }
+}

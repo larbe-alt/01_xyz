@@ -8,6 +8,9 @@ const log = createLogger("core:account");
 
 export class AccountState {
   private lastRefreshMs = 0;
+  // Single-flight: concurrent refresh() callers (account WS bursts + the periodic
+  // timer) share one in-flight fetchInfo() so they can't interleave-write user.* state.
+  private inflightRefresh: Promise<void> | null = null;
 
   constructor(
     private readonly nord: Nord,
@@ -26,9 +29,17 @@ export class AccountState {
   }
 
   async refresh(): Promise<void> {
-    await this.user.fetchInfo();
-    this.lastRefreshMs = Date.now();
-    log.debug("Account state refreshed", { accountId: this.accountId });
+    if (this.inflightRefresh) return this.inflightRefresh;
+    this.inflightRefresh = (async () => {
+      try {
+        await this.user.fetchInfo();
+        this.lastRefreshMs = Date.now();
+        log.debug("Account state refreshed", { accountId: this.accountId });
+      } finally {
+        this.inflightRefresh = null;
+      }
+    })();
+    return this.inflightRefresh;
   }
 
   ageMs(): number {
