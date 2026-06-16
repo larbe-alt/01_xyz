@@ -1,0 +1,32 @@
+{
+  "name": "01_xyz",
+  "version": "1.0.0",
+  "description": "Trading bot for 01 Exchange",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "smoke": "tsx src/scripts/smoke.ts",
+    "record": "tsx src/scripts/record.ts",
+    "strategy": "tsx src/scripts/run-strategy.ts",
+    "test:core": "tsx src/scripts/test-core.ts",
+    "test:feed": "tsx src/scripts/test-feed.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@n1xyz/nord-ts": "^0.5.1",
+    "@solana/web3.js": "^1.98.4",
+    "dotenv": "^17.4.2",
+    "duckdb": "^1.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
