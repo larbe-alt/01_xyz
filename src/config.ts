@@ -39,7 +39,10 @@ export function loadConfig(): Config {
 
   return {
     network,
-    solanaRpc: process.env.SOLANA_RPC ?? "https://api.devnet.solana.com",
+    solanaRpc:
+      network === "mainnet"
+        ? (process.env.SOLANA_RPC_MAINNET ?? process.env.SOLANA_RPC ?? "https://api.mainnet-beta.solana.com")
+        : (process.env.SOLANA_RPC ?? "https://api.devnet.solana.com"),
     webServerUrl: process.env.WEB_SERVER_URL ?? preset.webServerUrl,
     wsHost: process.env.WS_HOST ?? preset.wsHost,
     appKey: process.env.APP_KEY ?? preset.appKey,
