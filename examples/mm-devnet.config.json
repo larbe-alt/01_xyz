@@ -1,0 +1,33 @@
+{
+  "strategy": "microprice-mm",
+  "run": {
+    "markets": ["ETHUSD"],
+    "tickMs": 5000,
+    "refreshMs": 15000,
+    "flattenOnShutdown": true
+  },
+  "risk": {
+    "markets": [
+      {
+        "symbol": "ETHUSD",
+        "maxPositionBase": 0.1,
+        "maxOrderNotional": 500,
+        "maxLeverage": 2,
+        "maxOpenOrders": 4
+      }
+    ],
+    "defaultMaxLeverage": 2,
+    "maxTotalGrossNotional": 1000,
+    "minMarginBufferPct": 0.3,
+    "maxDailyLossUsdc": 20,
+    "maxAccountAgeSec": 30
+  },
+  "params": {
+    "halfSpreadBps": 15,
+    "skewK": 0.5,
+    "orderSize": 0.01,
+    "requoteMs": 2000,
+    "imbDepth": 5
+  },
+  "dryRun": true
+}
