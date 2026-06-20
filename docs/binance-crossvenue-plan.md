@@ -1,8 +1,7 @@
 # Binance ↔ 01 Cross-Venue Plan
 
-**Status:** Planning. Recorder reused; **analysis runs VPS-side in place — no Mac
-data transfer** (B2 download cap was exhausted; both venues' data already co-reside
-on the VPS). **Last updated:** 2026-06-20
+**Status:** In progress. Probe code written & pushed; **pending VPS run for results**.
+Steps 3–4 blocked on probe output. **Last updated:** 2026-06-20
 **Scope (first pass):** ETH + HYPE.
 
 ## 0. Why
@@ -82,15 +81,22 @@ pandas/polars full loads. CPU/disk are fine (load ~0.02, 12 G free).
 ## 3. Plan (reuse, don't rebuild; analyze on VPS)
 
 - [x] **Step 0 — Reuse recorder as-is.** No VPS code change. Verified healthy.
-- [ ] **Step 1 — Alignment query (VPS).** Write a memory-capped duckdb script
-      (adapt `perpl/align` asof pattern) that as-of-joins Binance `book_ticker`
-      vs 01 reconstructed mid on the shared receive clock, ETH + HYPE. Runs on the
-      VPS reading both trees in place; writes a small aligned parquet locally.
-- [ ] **Step 2 — Lead-lag probe** (on VPS, off the small aligned output): cross-
-      correlate Binance mid returns vs 01 mid returns → "does Binance lead 01, by
-      how many ms?". *Deferred by user — measure later.*
-- [ ] **Step 3 — Productionize** the alignment as a repeatable VPS script (per-day,
-      hourly chunked) once the probe confirms edge.
+- [x] **Steps 1+2 — Loader + probe code written** (`research/src/binance.py`,
+      `research/scripts/lead_lag_probe.py`, pushed 2026-06-20). Steps merged: the
+      probe does grid-alignment in SQL (duckdb, 256MB cap, threads=1) then
+      cross-correlates in one pass — no intermediate aligned parquet needed.
+      Open items resolved in code: side vocab (`buy→bid`), HYPE support, VPS RAM cap.
+      **⏳ Pending: run on VPS, paste results.**
+      ```
+      cd /root/01_xyz/research
+      python -m scripts.lead_lag_probe \
+        --symbol ETHUSD --binance-symbol ETHUSDT \
+        --dir-01 /root/01_xyz/data --dir-binance /root/data/binance_futures \
+        --env mainnet --grid-ms 100 --max-lag-ms 1000
+      # repeat with --symbol HYPEUSD --binance-symbol HYPEUSDT
+      ```
+- [ ] **Step 3 — Productionize** as a repeatable per-day VPS script once probe
+      confirms edge (lag > 0, meaningful correlation).
 - [ ] **Step 4 — Features/strategies:** add Binance-derived signals (leader microprice,
       OFI, momentum; cross-venue basis vs `mark` funding) → strategy framework.
 
@@ -104,9 +110,10 @@ pandas/polars full loads. CPU/disk are fine (load ~0.02, 12 G free).
 
 ## 5. Open items / risks
 - **Recorder starvation (primary risk):** VPS-side analysis must stay within
-  ~370 MB RAM. Hard-cap every query (§2a). If memory pressure ever threatens the
-  recorder, fall back to waiting for B2 cap reset and pulling to Mac.
-- `perpl/align` `SYMBOL_MAP` has BTC/ETH only — HYPE needs adding when we adapt it.
-- 01 quotes need book reconstruction (delta/snapshot, only 5 levels); Binance gives
-  best bid/ask directly — align at best-level first.
-- Trade-side vocab differs (bid/ask vs buy/sell) — normalize in the loader.
+  ~370 MB RAM. Hard-cap every query (§2a). Mitigated: probe uses `memory_limit='256MB'`,
+  `threads=1`, grid-resamples Binance in SQL before returning to Python.
+- **Probe not yet run** — no empirical lead-lag measurement exists yet. Steps 3–4
+  are speculative until results land.
+- If probe shows no edge (lag ≈ 0 or low corr), reconsider Step 4 scope.
+- ~~Side vocab mismatch (bid/ask vs buy/sell)~~ — resolved in `binance.py`.
+- ~~HYPE missing from SYMBOL_MAP~~ — resolved; probe accepts any symbol as CLI arg.
