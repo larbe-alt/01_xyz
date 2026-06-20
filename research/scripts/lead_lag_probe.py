@@ -136,6 +136,10 @@ def main() -> None:
     parser.add_argument("--env",         default="mainnet",  help="01 environment (mainnet/devnet)")
     parser.add_argument("--grid-ms",     type=int, default=100,  help="Resample grid in ms (default 100)")
     parser.add_argument("--max-lag-ms",  type=int, default=1000, help="Max lag to test in ms (default 1000)")
+    parser.add_argument("--binance-grid-parquet", default=None,
+                        help="Pre-gridded Binance parquet (cols recv_ms,bid,ask,mid). "
+                             "If set, skip the SQL reduction — use when Binance was "
+                             "reduced on the VPS and analysis runs off-box. MUST match --grid-ms.")
     args = parser.parse_args()
 
     dir_01      = str(Path(args.dir_01).resolve())
@@ -154,14 +158,23 @@ def main() -> None:
     t_01_start = int(e01["recv_ms"].min())
     t_01_end   = int(e01["recv_ms"].max())
 
-    # ---- Binance mid series (grid-resampled in SQL) ----
-    print(f"Loading Binance book_ticker grid ({grid_ms}ms) for {args.binance_symbol} from {dir_binance} ...")
-    bnb = load_book_ticker_grid(
-        dir_binance, args.binance_symbol,
-        grid_ms=grid_ms,
-        from_ms=t_01_start,
-        to_ms=t_01_end,
-    )
+    # ---- Binance mid series (grid-resampled in SQL, or pre-reduced parquet) ----
+    if args.binance_grid_parquet:
+        print(f"Loading pre-gridded Binance parquet {args.binance_grid_parquet} "
+              f"(assumed {grid_ms}ms grid) ...")
+        bnb = (
+            pl.read_parquet(args.binance_grid_parquet)
+            .filter((pl.col("recv_ms") >= t_01_start) & (pl.col("recv_ms") <= t_01_end))
+            .sort("recv_ms")
+        )
+    else:
+        print(f"Loading Binance book_ticker grid ({grid_ms}ms) for {args.binance_symbol} from {dir_binance} ...")
+        bnb = load_book_ticker_grid(
+            dir_binance, args.binance_symbol,
+            grid_ms=grid_ms,
+            from_ms=t_01_start,
+            to_ms=t_01_end,
+        )
     if len(bnb) == 0:
         print("ERROR: no Binance data found in the 01 time range.")
         sys.exit(1)
