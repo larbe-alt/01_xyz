@@ -1,7 +1,7 @@
 # Binance ↔ 01 Cross-Venue Plan
 
-**Status:** In progress. Probe code written & pushed; **pending VPS run for results**.
-Steps 3–4 blocked on probe output. **Last updated:** 2026-06-20
+**Status:** Probe RUN — **Binance leads 01 for both ETH & HYPE** (see §Results).
+Edge confirmed; Steps 3–4 now justified. **Last updated:** 2026-06-20
 **Scope (first pass):** ETH + HYPE.
 
 ## 0. Why
@@ -78,6 +78,22 @@ acceptable *if and only if* it cannot starve the live recorder.
 instead of OOM-ing. Use the **duckdb CLI** (`/usr/local/bin/duckdb`, present), not
 pandas/polars full loads. CPU/disk are fine (load ~0.02, 12 G free).
 
+## 2b. What actually ran (2026-06-20) — recorder-safe split
+
+`available` RAM was **~297 MB** at run time (recorder grew past the 370 MB the
+plan assumed), and the VPS has **no Python analysis deps** (no duckdb/polars/numpy,
+system or venv). Running the full Python probe on the box was therefore unsafe —
+the 01 replay holds millions of `(ts, mid)` tuples *outside* duckdb's 256 MB cap.
+So we split it:
+- **Heavy reduction stays on the VPS**, done with the **duckdb CLI** (no Python):
+  grid-resample each Binance `book_ticker` to 100 ms buckets (`arg_max(struct, recv_ns)`
+  for a coherent last quote), pinned `threads=1 / memory_limit=256MB /
+  temp_directory=/root/tmp`. Output ~27–29 MB each, 31 s, recorder untouched.
+- **Light analysis runs on the Mac**: pull the small grids + 01 `snapshot/delta`
+  (~241 MB total, rate-limited rsync), replay + correlate locally via the new
+  `--binance-grid-parquet` fast-path. **One open hourly file** (current `dt=` being
+  written) breaks duckdb — bound `dt <= <yesterday>`; the 01 overlap didn't need it.
+
 ## 3. Plan (reuse, don't rebuild; analyze on VPS)
 
 - [x] **Step 0 — Reuse recorder as-is.** No VPS code change. Verified healthy.
@@ -86,22 +102,47 @@ pandas/polars full loads. CPU/disk are fine (load ~0.02, 12 G free).
       probe does grid-alignment in SQL (duckdb, 256MB cap, threads=1) then
       cross-correlates in one pass — no intermediate aligned parquet needed.
       Open items resolved in code: side vocab (`buy→bid`), HYPE support, VPS RAM cap.
-      **⏳ Pending: run on VPS, paste results.**
+- [x] **Probe hardened + RUN (2026-06-20).** Review found the original probe would
+      give untrustworthy lags on the sparse 01 tape; fixed before running:
+      dense uniform grid + forward-fill (lag↔time now valid), per-lag Pearson,
+      elementwise log-returns, Hive `dt` partition pruning in the loader.
+      Run used the **recorder-safe split** (see §2b): Binance reduced on the VPS
+      via the duckdb CLI, analysis on the Mac via `--binance-grid-parquet`.
       ```
-      cd /root/01_xyz/research
-      python -m scripts.lead_lag_probe \
-        --symbol ETHUSD --binance-symbol ETHUSDT \
-        --dir-01 /root/01_xyz/data --dir-binance /root/data/binance_futures \
-        --env mainnet --grid-ms 100 --max-lag-ms 1000
-      # repeat with --symbol HYPEUSD --binance-symbol HYPEUSDT
+      # VPS (duckdb CLI): grid-resample book_ticker -> small parquet, memory-capped.
+      # Mac: .venv/bin/python -m scripts.lead_lag_probe \
+      #   --symbol ETHUSD --binance-symbol ETHUSDT --env mainnet \
+      #   --dir-01 <pulled 01 data> \
+      #   --binance-grid-parquet ETHUSDT.grid100.parquet --grid-ms 100 --max-lag-ms 1000
       ```
-- [ ] **Step 3 — Productionize** as a repeatable per-day VPS script once probe
-      confirms edge (lag > 0, meaningful correlation).
+- [ ] **Step 3 — Productionize** as a repeatable per-day VPS script. The split is
+      proven; remaining work is to schedule the duckdb-CLI reduction + asof analysis.
 - [ ] **Step 4 — Features/strategies:** add Binance-derived signals (leader microprice,
       OFI, momentum; cross-venue basis vs `mark` funding) → strategy framework.
 
 > No Mac data pull needed. If we ever want the small aligned outputs locally, those
 > are KBs–few MB and fit comfortably under the B2 free egress.
+
+## 3b. Results (2026-06-20) — Binance leads 01
+
+74.68 h overlap (2026-06-16 → 06-19), 100 ms grid, **2.69 M** dense aligned rows
+per symbol. Cross-correlation of 100 ms log-returns; `lag>0` = Binance leads.
+
+| Symbol | Peak lag | Peak corr | corr@0ms | corr@−100ms | Read |
+|---|---|---|---|---|---|
+| ETHUSD  | **+100 ms** | 0.395 | 0.392 | 0.162 | Binance leads; lead is sub-grid (0–100 ms) — corr@0 ≈ corr@100 |
+| HYPEUSD | **+100 ms** | 0.326 | 0.252 | 0.044 | Binance leads more cleanly; lead concentrated near +100 ms |
+
+- **Direction is unambiguous:** the curve is strongly right-skewed for both
+  (e.g. ETH +200 ms = 0.162 vs −200 ms = 0.090; HYPE +100 = 0.326 vs −100 = 0.044).
+  Negative-lag (01-leads) correlations are ~noise → **01 never leads Binance.**
+- **ETH:** corr@0 ≈ corr@+100 ms → true lead is **<100 ms**, unresolved at this grid.
+- **HYPE:** thinner 01 book → lead is sharper and sits right at the +100 ms bucket.
+- **Caveat:** 100 ms is the resolution floor. A 20 ms re-reduce would pin the
+  actionable lead (how far ahead to quote). Sample is large/robust (2.69 M rows).
+
+**Verdict:** hypothesis confirmed — there is exploitable cross-venue lead-lag.
+Step 4 (Binance-leader signals, follow-the-leader MM) is justified.
 
 ## 4. Strategy families this enables
 1. Cross-venue lead-lag / follow-the-leader (Binance flow → quote ahead on 01's book).
@@ -112,8 +153,8 @@ pandas/polars full loads. CPU/disk are fine (load ~0.02, 12 G free).
 - **Recorder starvation (primary risk):** VPS-side analysis must stay within
   ~370 MB RAM. Hard-cap every query (§2a). Mitigated: probe uses `memory_limit='256MB'`,
   `threads=1`, grid-resamples Binance in SQL before returning to Python.
-- **Probe not yet run** — no empirical lead-lag measurement exists yet. Steps 3–4
-  are speculative until results land.
-- If probe shows no edge (lag ≈ 0 or low corr), reconsider Step 4 scope.
+- ~~Probe not yet run~~ — **run 2026-06-20**, edge confirmed (§3b). Steps 3–4 live.
+- ~~If probe shows no edge~~ — it did: peak corr 0.40 (ETH) / 0.33 (HYPE), Binance leads.
+- **Resolution floor:** 100 ms grid can't pin sub-100 ms lead; re-reduce at 20 ms next.
 - ~~Side vocab mismatch (bid/ask vs buy/sell)~~ — resolved in `binance.py`.
 - ~~HYPE missing from SYMBOL_MAP~~ — resolved; probe accepts any symbol as CLI arg.
