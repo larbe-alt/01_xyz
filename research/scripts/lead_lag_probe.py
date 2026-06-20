@@ -6,7 +6,10 @@ Method:
   2. Build a grid-resampled mid series for Binance from book_ticker (recv_ms clock),
      downsampled IN SQL so only ~MBs leave duckdb (VPS-safe).
   3. Both recorders run on the same VPS → clocks are co-located → no NTP skew.
-  4. Inner-join both on the shared grid, compute log-returns, cross-correlate.
+  4. Reindex BOTH onto a dense, uniform grid over the overlap (forward-fill held
+     mids) so "lag = k steps" == k * grid_ms; compute log-returns; per-lag Pearson
+     cross-correlate. (A sparse inner-join would let a return straddle a gap and
+     break the lag↔time mapping.)
   5. lag > 0 means Binance leads 01.
 
 VPS usage (run where both data trees live):
@@ -72,28 +75,51 @@ def _resample_to_grid(df: pl.DataFrame, grid_ms: int) -> pl.DataFrame:
 # Cross-correlation
 # ---------------------------------------------------------------------------
 
-def _log_returns(series: np.ndarray) -> np.ndarray:
+def _log_returns(series: np.ndarray) -> tuple[np.ndarray, float]:
+    """Elementwise log-returns on a uniform grid.
+
+    A step is valid only if BOTH endpoints are positive; invalid steps are set to
+    0 *individually* (not the whole series) and reported as `invalid_frac` so the
+    caller can fail loud — a single bad mid must not silently zero everything.
+    """
+    series = np.asarray(series, dtype=float)
     r = np.zeros_like(series)
-    valid = series > 0
-    if valid.all():
-        r[1:] = np.log(series[1:] / series[:-1])
-    return r
+    if len(series) < 2:
+        return r, 0.0
+    prev, cur = series[:-1], series[1:]
+    valid = (prev > 0) & (cur > 0)
+    r[1:][valid] = np.log(cur[valid] / prev[valid])
+    invalid_frac = float(1.0 - valid.mean())
+    return r, invalid_frac
 
 
 def _cross_correlate(x: np.ndarray, y: np.ndarray, max_lag: int) -> tuple[np.ndarray, np.ndarray]:
     """
-    Cross-correlation at lags -max_lag … +max_lag.
+    Per-lag Pearson cross-correlation at lags -max_lag … +max_lag.
     lag > 0 → x leads y (x at t correlates with y at t+lag).
+
+    Each lag's correlation is computed on its own overlapping window (mean removed
+    per window, normalised by both windows' std) so values are true correlations
+    bounded in [-1, 1] and comparable across lags. NaN where the window is too short.
     """
-    x = (x - x.mean()) / (x.std() + 1e-12)
-    y = (y - y.mean()) / (y.std() + 1e-12)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
     n = len(x)
+    max_lag = max(0, min(max_lag, n - 1))
     lags = np.arange(-max_lag, max_lag + 1)
-    corrs = np.array([
-        np.dot(x[:n - lag], y[lag:]) / (n - lag) if lag >= 0
-        else np.dot(x[-lag:], y[:n + lag]) / (n + lag)
-        for lag in lags
-    ])
+    corrs = np.full(len(lags), np.nan)
+    for i, lag in enumerate(lags):
+        if lag >= 0:
+            a, b = x[:n - lag], y[lag:]
+        else:
+            a, b = x[-lag:], y[:n + lag]
+        if len(a) < 3:
+            continue
+        a = a - a.mean()
+        b = b - b.mean()
+        denom = np.sqrt(float((a * a).sum()) * float((b * b).sum()))
+        if denom > 0:
+            corrs[i] = float((a * b).sum() / denom)
     return lags, corrs
 
 
@@ -150,20 +176,54 @@ def main() -> None:
     overlap_h = (t_end - t_start) / 3_600_000
     print(f"Overlap: {t_start} … {t_end}  ({overlap_h:.2f} hours)")
 
-    # ---- Resample 01 to same grid, inner-join ----
+    # ---- Build a DENSE, uniform grid over the overlap ----
+    # Critical: cross-correlation maps "lag = k steps" to "k * grid_ms" only if the
+    # rows are uniformly spaced. Inner-joining sparse buckets (the old approach)
+    # dropped quiet buckets, so adjacent rows could be seconds apart and a single
+    # log-return could straddle a multi-second gap. We instead reindex both venues
+    # onto a contiguous grid and forward-fill the last known mid (a held price → a
+    # zero return, which is correct: no trade, no move).
     e01_grid = _resample_to_grid(
         e01.filter((pl.col("recv_ms") >= t_start) & (pl.col("recv_ms") <= t_end)),
         grid_ms,
     )
-    bnb_grid = bnb.filter(
-        (pl.col("recv_ms") >= t_start) & (pl.col("recv_ms") <= t_end)
-    ).rename({"recv_ms": "bucket_ms"})
-
-    merged = (
-        bnb_grid.join(e01_grid, on="bucket_ms", suffix="_01")
+    bnb_grid = (
+        bnb.filter((pl.col("recv_ms") >= t_start) & (pl.col("recv_ms") <= t_end))
+        .select(["recv_ms", "mid"])
+        .rename({"recv_ms": "bucket_ms"})
         .sort("bucket_ms")
     )
-    print(f"Aligned grid rows: {len(merged):,}")
+
+    b_start = (t_start // grid_ms) * grid_ms
+    b_end   = (t_end   // grid_ms) * grid_ms
+    n_dense = (b_end - b_start) // grid_ms + 1
+    if n_dense > 5_000_000:
+        print(f"ERROR: dense grid would be {n_dense:,} rows — narrow the window or "
+              f"raise --grid-ms (VPS RAM guard).")
+        sys.exit(1)
+
+    dense = pl.DataFrame(
+        {"bucket_ms": np.arange(b_start, b_end + grid_ms, grid_ms, dtype=np.int64)}
+    )
+
+    def _reindex(grid_df: pl.DataFrame) -> pl.DataFrame:
+        return (
+            dense.join(grid_df, on="bucket_ms", how="left")
+            .sort("bucket_ms")
+            .with_columns(pl.col("mid").forward_fill())
+        )
+
+    e01_d = _reindex(e01_grid).rename({"mid": "mid_01"})
+    bnb_d = _reindex(bnb_grid)
+
+    # Inner-join on the shared dense axis, then drop only the leading buckets that
+    # precede the first quote on either venue → the remainder stays contiguous.
+    merged = (
+        bnb_d.join(e01_d, on="bucket_ms")
+        .drop_nulls(["mid", "mid_01"])
+        .sort("bucket_ms")
+    )
+    print(f"Aligned dense grid rows: {len(merged):,}  (uniform {grid_ms}ms spacing)")
 
     if len(merged) < 20:
         print("ERROR: too few aligned rows — check overlap or reduce --grid-ms.")
@@ -172,13 +232,19 @@ def main() -> None:
     bnb_mid = merged["mid"].to_numpy().astype(float)
     e01_mid = merged["mid_01"].to_numpy().astype(float)
 
-    bnb_ret = _log_returns(bnb_mid)
-    e01_ret = _log_returns(e01_mid)
+    bnb_ret, bnb_bad = _log_returns(bnb_mid)
+    e01_ret, e01_bad = _log_returns(e01_mid)
+    if bnb_bad > 0.01 or e01_bad > 0.01:
+        print(f"WARNING: non-positive mids — Binance {bnb_bad:.1%}, 01 {e01_bad:.1%} "
+              f"of steps zeroed; lead-lag may be distorted.")
 
     lags, corrs = _cross_correlate(bnb_ret, e01_ret, max_lag_steps)
     lag_ms = lags * grid_ms
 
-    peak_idx    = int(np.argmax(corrs))
+    if np.all(np.isnan(corrs)):
+        print("ERROR: cross-correlation undefined (series too short or flat).")
+        sys.exit(1)
+    peak_idx    = int(np.nanargmax(corrs))
     peak_lag_ms = int(lag_ms[peak_idx])
     peak_corr   = float(corrs[peak_idx])
 
