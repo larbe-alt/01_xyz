@@ -2,6 +2,59 @@
 
 Important decisions and trade-offs. Newest first.
 
+## 2026-06-20 — Probe RUN: edge confirmed → greenlight Steps 3–4 (as PASSIVE signal)
+
+**Context:** Cross-venue lead-lag probe was hardened (review fixes, commits 6ec3010 /
+a7d82e2) and run. Result: **Binance leads 01 by ≤100 ms** — ETHUSD peak +100 ms
+corr 0.395, HYPEUSD +100 ms corr 0.326; 01 never leads (negative lags ≈ noise).
+Full results: `docs/binance-crossvenue-plan.md` §3b.
+
+**Decision:** Proceed with Steps 3 (productionize) and 4 (Binance-leader signals),
+but as a **passive / follow-the-leader market-making** signal, **not** reactive
+cross-venue arbitrage.
+
+**Why:** "Binance leads" ≠ "capturable". The lead is small (sub-100 ms for ETH).
+Classic reactive arb needs end-to-end latency-to-01 < the lead; on a Solana-based
+venue that's plausibly tens–hundreds of ms → the edge would be gone before our order
+rests. Passive quoting (bias resting orders toward Binance microprice) collects the
+drift without racing. The reactive option stays open *only if* measured 01 latency
+turns out well under the lead. Tracked in `open-questions.md`.
+
+**Consequence / how to apply:** before building, (a) measure end-to-end order latency
+to 01, (b) re-reduce the probe at **20 ms grid** to pin the true lead horizon (100 ms
+is a resolution floor), (c) backtest a Binance-anchored MM through `src/sim/` net of
+fees. If lead < latency → passive only.
+
+## 2026-06-20 — How cross-venue analysis actually runs: VPS-reduce + off-box analyze
+
+**Context:** Prior decision (below) was "run the analysis ON the VPS, in place".
+At run time that proved unsafe: `available` RAM was only **~297 MB** (recorder grew
+past the 370 MB assumed) AND the VPS has **no Python analysis deps** (no duckdb/
+polars/numpy, system or venv). The 01 replay holds millions of `(ts, mid)` tuples
+*outside* duckdb's 256 MB cap.
+
+**Decision:** Refine the rule to a **split**: do the heavy data reduction ON the VPS
+with the **duckdb CLI** (no Python), pull the small reduced outputs + the small 01
+`snapshot/delta` to the Mac (rate-limited rsync), and run the Python replay +
+correlation **off-box**. New probe flag `--binance-grid-parquet` consumes the
+pre-reduced grid.
+
+**Why:** Keeps the memory-heavy Python off the live recorder host entirely while the
+big data (Binance, ~900 MB) never leaves the VPS un-reduced. Reduction was 31 s,
+~27 MB out per symbol, recorder untouched.
+
+**Consequence / how to apply:**
+- VPS reduction MUST stay pinned (`threads=1; memory_limit='256MB';
+  temp_directory='/root/tmp'; preserve_insertion_order=false`) and prune on the Hive
+  `dt` partition.
+- **Gotcha:** duckdb aborts on the recorder's **open current-hour file**
+  (`dt=<today>/HH.parquet`, no magic bytes). Bound `dt <= <yesterday>`.
+- Do NOT `pip install` analysis deps onto the recorder VPS.
+
+**Trade-off:** one ~241 MB VPS→Mac pull per run (vs. zero with pure on-VPS), accepted
+for zero recorder-starvation risk. Supersedes the on-VPS-only stance below for any run
+that needs the Python replay; pure-duckdb-CLI work can still stay fully on the VPS.
+
 ## 2026-06-20 — Run cross-venue analysis ON the VPS, in place (no Mac data transfer)
 
 **Context:** Planned to pull Binance ETH+HYPE (1.4 GiB) to the Mac for alignment.
