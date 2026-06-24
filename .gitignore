@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
+.env.save
 /data/
 *.log
+__pycache__/
+research/output/
