@@ -9,6 +9,8 @@
     "dev": "tsx watch src/index.ts",
     "smoke": "tsx src/scripts/smoke.ts",
     "record": "tsx src/scripts/record.ts",
+    "traders:backfill": "tsx src/data/traders/backfill.ts",
+    "traders:analyze": "tsx src/data/traders/analyze.ts",
     "strategy": "tsx src/scripts/run-strategy.ts",
     "test:core": "tsx src/scripts/test-core.ts",
     "test:feed": "tsx src/scripts/test-feed.ts",
