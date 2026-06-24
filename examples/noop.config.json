@@ -1,0 +1,29 @@
+{
+  "strategy": "noop",
+  "run": {
+    "markets": ["BTCUSD"],
+    "tickMs": 1000,
+    "candleResolution": "1",
+    "refreshMs": 15000,
+    "flattenOnShutdown": false
+  },
+  "risk": {
+    "markets": [
+      {
+        "symbol": "BTCUSD",
+        "maxPositionBase": 0.01,
+        "maxOrderNotional": 500,
+        "maxLeverage": 3,
+        "maxOpenOrders": 4
+      }
+    ],
+    "defaultMaxLeverage": 3,
+    "maxTotalGrossNotional": 2000,
+    "minMarginBufferPct": 0.2,
+    "maxDailyLossUsdc": 50,
+    "maxAccountAgeSec": 30
+  },
+  "params": {
+    "logEvery": 5
+  }
+}
