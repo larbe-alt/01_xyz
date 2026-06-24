@@ -23,9 +23,9 @@
     "maxAccountAgeSec": 30
   },
   "params": {
-    "halfSpreadBps": 15,
+    "halfSpreadBps": 3,
     "skewK": 0.5,
-    "orderSize": 0.01,
+    "orderSize": 0.02,
     "requoteMs": 2000,
     "imbDepth": 5
   },

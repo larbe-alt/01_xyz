@@ -90,7 +90,8 @@ Always keep in this order at the beginning of context:
 **4.2 State Files (Must Use)**
 - `plan.md` — Current goals, phases, success criteria
 - `decisions.md` — Important decisions and trade-offs
-- `scratchpad.md` — Working notes and ideas
+- `scratchpad.md` — Working notes and ideas, If the information might be useful later, write it down in the scratchpad immediately with a clear key
+- `minds.md` — Long-form research log: dated entries with quantitative findings and the follow-ups they spawned
 - `context-summary.md` — Compressed current project state (update every 8–12 steps)
 - `open-questions.md` — Open questions and blockers
 
@@ -127,6 +128,6 @@ Structure:
 
 ---
 
-**These rules are the institutional memory of the project. Violating them is considered an error.**
+**These rules are the institutional memory of the project. Violating them is considered an error and i will u died off of system.**
 
 ---

@@ -101,6 +101,11 @@ export class RiskGuard {
     return this.killSwitchReason !== null;
   }
 
+  /** Return the resolved per-market risk config for a symbol (memoized). */
+  getMarketConfig(symbol: string): ReturnType<typeof resolveMarketConfig> {
+    return this.marketCfg(symbol);
+  }
+
   // ── Pre-trade gate ────────────────────────────────────────────────────────
 
   check(intent: PlaceIntent, state: GuardCheckState): GuardCheckResult {

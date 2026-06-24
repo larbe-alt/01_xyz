@@ -28,7 +28,12 @@ export interface RiskConfig {
 }
 
 // "Effectively unlimited" sentinel for unset caps.
-const UNLIMITED = new Decimal("1e18");
+export const UNLIMITED = new Decimal("1e18");
+
+/** True when a numeric cap was set to the UNLIMITED sentinel (i.e. no real cap). */
+export function isUnlimited(v: number): boolean {
+  return !Number.isFinite(v) || v >= 1e17;
+}
 
 export function resolveMarketConfig(
   symbol: string,

@@ -137,6 +137,17 @@ export class SessionTracker {
     this.maybeLogProgress(ctx);
   }
 
+  /**
+   * Push a fill that arrived via the account WS stream (resting-order fill) rather
+   * than a place result. Callers should look up `fair` from their own state; pass 0
+   * if unavailable (slippage will be reported as 0 for that fill).
+   */
+  onFill(fill: FillRecord): void {
+    this.fills.push(fill);
+    const absPos = Math.abs(fill.positionAfter);
+    if (absPos > this.maxAbsPos) this.maxAbsPos = absPos;
+  }
+
   /** Call during strategy shutdown. Returns the full summary. */
   finish(ctx: StrategyContext): SessionSummary {
     this.sampleEquity(ctx);

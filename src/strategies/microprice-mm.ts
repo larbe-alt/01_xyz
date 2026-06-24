@@ -1,7 +1,9 @@
 import { Side } from "@n1xyz/nord-ts";
+import type { WebSocketAccountUpdate } from "@n1xyz/nord-ts";
 import type { Strategy, StrategyContext } from "../engine/types.js";
 import type { LocalBook } from "../data/feed.js";
 import { SessionTracker, type QuoteResult } from "../engine/session-tracker.js";
+import { isUnlimited } from "../risk/limits.js";
 
 interface MmParams {
   halfSpreadBps: number;
@@ -10,8 +12,6 @@ interface MmParams {
   requoteMs: number;
   imbDepth: number;
 }
-
-const SYMBOL = "ETHUSD";
 
 function topNDepth(book: LocalBook, side: "bid" | "ask", n: number): number {
   const map = side === "bid" ? book.bids : book.asks;
@@ -26,8 +26,32 @@ function topNDepth(book: LocalBook, side: "bid" | "ask", n: number): number {
   return total;
 }
 
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+// p90 of |Δmid| in bps over a ~1s lookback. Single forward pass: j is monotonic
+// across i since sample ts is monotonic, so total work is O(N), not O(N²).
+function rollingP90Bps(samples: { ts: number; mid: number }[]): number | null {
+  if (samples.length < 200) return null;
+  const deltas: number[] = [];
+  let j = 1;
+  for (let i = 0; i < samples.length; i++) {
+    if (j <= i) j = i + 1;
+    while (j < samples.length && samples[j].ts - samples[i].ts < 1000) j++;
+    if (j >= samples.length) break;
+    if (samples[j].ts - samples[i].ts <= 3000) {
+      deltas.push((Math.abs(samples[j].mid - samples[i].mid) / samples[i].mid) * 1e4);
+    }
+  }
+  if (deltas.length === 0) return null;
+  deltas.sort((a, b) => a - b);
+  return deltas[Math.floor(deltas.length * 0.9)];
+}
+
 export function microPriceMm(): Strategy<MmParams> {
-  let lastQuoteTs = 0;
+  const lastQuoteTs = new Map<string, number>();
+  const recentMids = new Map<string, { ts: number; mid: number }[]>();
   const tracker = new SessionTracker();
 
   return {
@@ -44,22 +68,31 @@ export function microPriceMm(): Strategy<MmParams> {
     },
 
     async init(ctx) {
-      ctx.logger.info("microprice-mm init", { symbol: SYMBOL, params: ctx.params });
+      ctx.logger.info("microprice-mm init", { params: ctx.params });
       tracker.start(ctx);
-      await ctx.orders.cancelAll(SYMBOL);
+      await ctx.orders.cancelAll();
     },
 
     async onBook(book: LocalBook, ctx: StrategyContext<MmParams>) {
-      if (book.symbol !== SYMBOL || !book.synced) return;
+      if (!book.synced) return;
 
+      const symbol = book.symbol;
       const now = ctx.clock.now();
-      if (now - lastQuoteTs < ctx.params.requoteMs) return;
+      if (now - (lastQuoteTs.get(symbol) ?? 0) < ctx.params.requoteMs) return;
 
       const { halfSpreadBps, skewK, orderSize, imbDepth } = ctx.params;
       const { bestBid, bestAsk } = book;
       if (bestBid <= 0 || bestAsk <= 0 || bestBid >= bestAsk) return;
 
       const mid = (bestBid + bestAsk) / 2;
+
+      // Rolling mid buffer (~30 min @ 1 Hz). Trim in batches so the per-event push
+      // stays amortized O(1) — a per-event shift() is O(N) in V8.
+      const midBuf = recentMids.get(symbol) ?? [];
+      midBuf.push({ ts: now, mid });
+      if (midBuf.length >= 2000) midBuf.splice(0, midBuf.length - 1800);
+      recentMids.set(symbol, midBuf);
+
       const spread = bestAsk - bestBid;
 
       const bidDepth = topNDepth(book, "bid", imbDepth);
@@ -69,34 +102,46 @@ export function microPriceMm(): Strategy<MmParams> {
 
       const fair = mid + (imbalance - 0.5) * spread;
 
-      const pos = ctx.positions.get(SYMBOL);
+      const pos = ctx.positions.get(symbol);
       const inventory = pos ? (pos.isLong ? pos.baseSize.toNumber() : -pos.baseSize.toNumber()) : 0;
-      const skew = skewK * inventory * mid * 0.0001;
 
-      const halfSpread = mid * halfSpreadBps * 0.0001;
+      const p90 = rollingP90Bps(midBuf);
+      const effectiveBps = p90 !== null ? Math.max(halfSpreadBps, p90) : halfSpreadBps;
+      const halfSpread = mid * effectiveBps * 0.0001;
+
+      // Skew normalized against the per-symbol position cap so it bites at the limit
+      // rather than disappearing in tick rounding.
+      const maxInv = Number(ctx.risk.guard.getMarketConfig(symbol).maxPositionBase);
+      let skew = 0;
+      if (isUnlimited(maxInv)) {
+        ctx.logger.warn("microprice-mm: maxPositionBase not set for symbol, skipping skew", { symbol });
+      } else {
+        skew = skewK * clamp(inventory / maxInv, -1, 1) * halfSpread;
+      }
+
       const rawBid = fair - halfSpread - skew;
       const rawAsk = fair + halfSpread - skew;
 
-      const bidPrice = ctx.registry.roundPrice(SYMBOL, rawBid);
-      const askPrice = ctx.registry.roundPrice(SYMBOL, rawAsk);
+      const bidPrice = ctx.registry.roundPrice(symbol, rawBid);
+      const askPrice = ctx.registry.roundPrice(symbol, rawAsk);
 
-      const meta = ctx.registry.bySymbol(SYMBOL);
+      const meta = ctx.registry.bySymbol(symbol);
       const minSize = Math.pow(10, -meta.sizeDecimals);
       if (orderSize < minSize) {
-        ctx.logger.warn("orderSize below minimum", { orderSize, minSize });
+        ctx.logger.warn("orderSize below minimum", { symbol, orderSize, minSize });
         return;
       }
-      const size = ctx.registry.roundSize(SYMBOL, orderSize);
+      const size = ctx.registry.roundSize(symbol, orderSize);
       if (size.isZero()) return;
 
-      await ctx.orders.cancelAll(SYMBOL);
+      await ctx.orders.cancelAll(symbol);
 
       const quotes: QuoteResult[] = [];
       const errors: string[] = [];
 
       try {
         const r = await ctx.orders.place({
-          symbol: SYMBOL,
+          symbol,
           side: Side.Bid,
           type: "postOnly",
           price: bidPrice,
@@ -109,7 +154,7 @@ export function microPriceMm(): Strategy<MmParams> {
 
       try {
         const r = await ctx.orders.place({
-          symbol: SYMBOL,
+          symbol,
           side: Side.Ask,
           type: "postOnly",
           price: askPrice,
@@ -120,22 +165,59 @@ export function microPriceMm(): Strategy<MmParams> {
         errors.push(`ask: ${e.message}`);
       }
 
-      lastQuoteTs = now;
-      tracker.onQuote(ctx, SYMBOL, fair, quotes);
+      lastQuoteTs.set(symbol, now);
+      tracker.onQuote(ctx, symbol, fair, quotes);
+
+      if (effectiveBps > 2 * halfSpreadBps) {
+        ctx.logger.warn("microprice-mm: regime widening", { symbol, effectiveBps, floor: halfSpreadBps });
+      }
 
       ctx.logger.info("quote", {
+        symbol,
         fair: fair.toFixed(2),
         bid: bidPrice.toString(),
         ask: askPrice.toString(),
         imb: imbalance.toFixed(3),
         inv: inventory,
         skew: skew.toFixed(4),
+        effHalfSpreadBps: effectiveBps.toFixed(2),
         ...(errors.length > 0 && { errors }),
       });
     },
 
+    onAccount(u: WebSocketAccountUpdate, ctx: StrategyContext<MmParams>) {
+      const now = ctx.clock.now();
+      const posBySymbol = new Map<string, number>();
+      for (const fill of Object.values(u.fills)) {
+        let symbol: string;
+        try {
+          symbol = ctx.registry.byId(fill.market_id).symbol;
+        } catch {
+          ctx.logger.warn("microprice-mm onAccount: unknown market_id in fill", { market_id: fill.market_id });
+          continue;
+        }
+        let positionAfter = posBySymbol.get(symbol);
+        if (positionAfter === undefined) {
+          const pos = ctx.positions.get(symbol);
+          positionAfter = pos ? (pos.isLong ? pos.baseSize.toNumber() : -pos.baseSize.toNumber()) : 0;
+          posBySymbol.set(symbol, positionAfter);
+        }
+        // fair-at-fill unknown here; slippage reported as 0 for resting-order fills.
+        tracker.onFill({
+          ts: now,
+          symbol,
+          side: fill.side,
+          price: fill.price,
+          size: fill.quantity,
+          slippageBps: 0,
+          fairAtFill: 0,
+          positionAfter,
+        });
+      }
+    },
+
     async shutdown(ctx) {
-      await ctx.orders.cancelAll(SYMBOL);
+      await ctx.orders.cancelAll();
       const summary = tracker.finish(ctx);
       ctx.logger.info("\n" + SessionTracker.formatSummary(summary));
     },
