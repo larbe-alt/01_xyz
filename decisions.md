@@ -2,6 +2,43 @@
 
 Important decisions and trade-offs. Newest first.
 
+## 2026-06-25 — MM: per-market config files, separate processes
+
+**Context:** Microstructure calibration (`minds.md` 2026-06-25) shows HYPE is
+structurally 1.6–1.8× wider/more volatile than ETH; a single `halfSpreadBps` /
+`skewK` / `orderSize` across both markets is a strict pessimisation of one or
+the other. Strategy supports multi-market in one process, but params are global.
+
+**Decision:** Split MM into two **separate config files** (`examples/mm-eth.config.json`,
+`examples/mm-hype.config.json`), each running as its own process. No code
+change to `microprice-mm.ts` needed — single-market `run.markets` keeps the
+existing `ctx.params` global, which is fine when there's only one market.
+
+**Trade-off accepted:** two processes share one 01 account → margin, equity,
+and the `maxDailyLossUsdc` kill-switch are **per-process**, not global. To
+avoid combined exposure blowing past intent:
+- `maxTotalGrossNotional`: halved per config (500 each, was 1000 shared).
+- `maxDailyLossUsdc`: halved per config (10 each, was 20 shared).
+- `maxLeverage`/`minMarginBufferPct` unchanged — those compose safely (each
+  process's IMF check sees the combined account state from `fetchInfo`).
+
+**If we put real capital on it**, revisit: either (a) lift `paramsByMarket`
+into the strategy so one process covers both (cleaner risk accounting), or
+(b) add a tiny external watchdog that monitors combined PnL and trips both
+processes via a shared kill-flag. Option (a) is the lower-magic path.
+
+**Calibrated values (US-anchored, from `minds.md` 2026-06-25):**
+
+| param           | ETH  | HYPE |
+| --------------- | ---- | ---- |
+| halfSpreadBps   | 3    | 4.5  |
+| skewK           | 0.5  | 0.7  |
+| orderSize       | 0.02 | 2.0  |
+| maxPositionBase | 0.1  | 15   |
+
+Both start `dryRun: true`. `mm-devnet.config.json` left untouched as the
+devnet template / fixture.
+
 ## 2026-06-20 — Probe RUN: edge confirmed → greenlight Steps 3–4 (as PASSIVE signal)
 
 **Context:** Cross-venue lead-lag probe was hardened (review fixes, commits 6ec3010 /

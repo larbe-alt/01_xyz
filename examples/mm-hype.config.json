@@ -1,0 +1,33 @@
+{
+  "strategy": "microprice-mm",
+  "run": {
+    "markets": ["HYPEUSD"],
+    "tickMs": 5000,
+    "refreshMs": 15000,
+    "flattenOnShutdown": true
+  },
+  "risk": {
+    "markets": [
+      {
+        "symbol": "HYPEUSD",
+        "maxPositionBase": 15,
+        "maxOrderNotional": 250,
+        "maxLeverage": 2,
+        "maxOpenOrders": 4
+      }
+    ],
+    "defaultMaxLeverage": 2,
+    "maxTotalGrossNotional": 500,
+    "minMarginBufferPct": 0.3,
+    "maxDailyLossUsdc": 10,
+    "maxAccountAgeSec": 30
+  },
+  "params": {
+    "halfSpreadBps": 4.5,
+    "skewK": 0.7,
+    "orderSize": 2.0,
+    "requoteMs": 2000,
+    "imbDepth": 5
+  },
+  "dryRun": true
+}
