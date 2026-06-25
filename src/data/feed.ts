@@ -62,7 +62,11 @@ export class LiveFeed extends EventEmitter {
   private readonly maxReconnectDelayMs: number;
 
   private ws: any = null;
-  private lastMessageMs = 0;
+  // Per-stream last-activity. One shared timestamp would let a single still-
+  // ticking stream (e.g. 1m candle bars) mask silent death of trades/deltas on
+  // the same WS connection. Watchdog fails if ANY entry is stale.
+  private readonly streamLastMs = new Map<string, number>();
+  private readonly watchdogStreams: readonly string[];
   private livenessTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempt = 0;
   private reconnecting = false;
@@ -82,6 +86,15 @@ export class LiveFeed extends EventEmitter {
     this.maxReconnects = cfg.maxReconnects ?? Infinity;
     this.baseReconnectDelayMs = cfg.baseReconnectDelayMs ?? 1_000;
     this.maxReconnectDelayMs = cfg.maxReconnectDelayMs ?? 30_000;
+
+    // Only "fast" streams (trades, deltas) gate the watchdog: an active market
+    // ticks both several times/sec. Candle ticks once per bar (≥ 60s), account
+    // and liquidation are episodic — including them would trip false reconnects
+    // on legitimate silence.
+    const watchdog: string[] = [];
+    if (trades?.length) watchdog.push("trades");
+    if (deltas?.length) watchdog.push("deltas");
+    this.watchdogStreams = watchdog;
   }
 
   start(): void {
@@ -96,6 +109,7 @@ export class LiveFeed extends EventEmitter {
     this.books.clear();
     this.deltaBuffers.clear();
     this.bookSyncing.clear();
+    this.streamLastMs.clear();
     log.info("Feed closed");
   }
 
@@ -158,7 +172,10 @@ export class LiveFeed extends EventEmitter {
         log.info("Connected");
         this.reconnectAttempt = 0;
         this.reconnecting = false;
-        this.lastMessageMs = Date.now();
+        // Seed each watchdogged stream so the timer doesn't trip before the
+        // first message arrives on a fresh connection.
+        const now = Date.now();
+        for (const s of this.watchdogStreams) this.streamLastMs.set(s, now);
         this.startLiveness();
         this.emit("connected");
         for (const s of this.subs.deltas ?? []) this.syncBook(s);
@@ -177,18 +194,18 @@ export class LiveFeed extends EventEmitter {
       });
 
       // SDK emits "trades" (plural) despite types declaring "trade"
-      (ws as any).on("trades", (u: WebSocketTradeUpdate) => { this.touch(); this.emit("trade", u); });
-      ws.on("delta", (u: WebSocketDeltaUpdate) => { const now = Date.now(); this.lastMessageMs = now; this.handleDelta(u, now); this.emit("delta", u); });
-      ws.on("candle", (u: WebSocketCandleUpdate) => { this.touch(); this.emit("candle", u); });
-      ws.on("account", (u: WebSocketAccountUpdate) => { this.touch(); this.emit("account", u); });
-      ws.on("liquidation", (u: WebSocketLiquidationUpdate) => { this.touch(); this.emit("liquidation", u); });
+      (ws as any).on("trades", (u: WebSocketTradeUpdate) => { this.touch("trades"); this.emit("trade", u); });
+      ws.on("delta", (u: WebSocketDeltaUpdate) => { const now = Date.now(); this.streamLastMs.set("deltas", now); this.handleDelta(u, now); this.emit("delta", u); });
+      ws.on("candle", (u: WebSocketCandleUpdate) => { this.touch("candles"); this.emit("candle", u); });
+      ws.on("account", (u: WebSocketAccountUpdate) => { this.touch("accounts"); this.emit("account", u); });
+      ws.on("liquidation", (u: WebSocketLiquidationUpdate) => { this.touch("liquidations"); this.emit("liquidation", u); });
     } catch (err) {
       log.error("Failed to create WS client", { error: err instanceof Error ? err.message : String(err) });
       this.scheduleReconnect();
     }
   }
 
-  private touch(): void { this.lastMessageMs = Date.now(); }
+  private touch(stream: string): void { this.streamLastMs.set(stream, Date.now()); }
 
   // Server kills WS-level pings (close 1011) — see scripts/ws/probe.py
   private disableHeartbeat(ws: any): void {
@@ -199,13 +216,22 @@ export class LiveFeed extends EventEmitter {
 
   private startLiveness(): void {
     this.stopLiveness();
+    if (this.watchdogStreams.length === 0) {
+      log.warn("Liveness watchdog disabled (no fast streams subscribed)");
+      return;
+    }
     this.livenessTimer = setInterval(() => {
-      if (this.lastMessageMs === 0) return;
-      const silentMs = Date.now() - this.lastMessageMs;
-      if (silentMs > this.livenessTimeoutMs) {
-        log.warn("Liveness timeout", { silentMs, thresholdMs: this.livenessTimeoutMs });
-        this.destroyWs();
-        this.scheduleReconnect();
+      const now = Date.now();
+      for (const s of this.watchdogStreams) {
+        const last = this.streamLastMs.get(s);
+        if (last === undefined) continue;
+        const silentMs = now - last;
+        if (silentMs > this.livenessTimeoutMs) {
+          log.warn("Liveness timeout", { stream: s, silentMs, thresholdMs: this.livenessTimeoutMs });
+          this.destroyWs();
+          this.scheduleReconnect();
+          return;
+        }
       }
     }, this.livenessCheckMs);
   }
