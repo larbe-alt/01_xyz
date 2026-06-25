@@ -2,47 +2,47 @@
 
 Newest first. Resolve or convert to a `decisions.md` entry when answered.
 
-## 2026-06-25 — Recorder restarted; root cause of silent WS death still unknown (open)
+## 2026-06-25 — Recorder silent WS death: ROOT CAUSE FOUND + FIXED (resolved)
 
-**What happened.** Recorder process was alive (PID 509888, npm exec tsx,
-inside tmux `recorder01` from 2026-06-16) but **4 of 5 WS-driven writers were
-zombies since 2026-06-19**: `trade/*`, `delta/*`, `snapshot/*`, `candle/*`
-record counters frozen at 6-day-old values while logs kept printing identical
-"Writer stats" lines every 30s. Only `mark/*` (REST poll, not WS) kept
-writing. No exception, no reconnect attempt logged — silent failure.
+**What happened.** Recorder process was alive (PID 509888, inside tmux
+`recorder01` from 2026-06-16) but **4 of 5 WS-driven writers were zombies
+since 2026-06-19**: `trade/*`, `delta/*`, `snapshot/*`, `candle/*` counters
+frozen while logs kept printing "Writer stats" every 30s. Only `mark/*`
+(REST poll) kept writing. No exception, no reconnect — silent failure for 6
+days.
 
-**Restart.** Killed tmux session, `git pull` (was 9 commits behind: 883124d
-→ a9be29b), restarted with `NETWORK=mainnet npm run record -- --markets
-ETHUSD,HYPEUSD --out /root/01_xyz/data`. WS reconnected, books synced at
-mainnet depths (47/76 ETH, 79/31 HYPE), gap-resync handled normally.
+**Root cause (confirmed, hypothesis 1).** `LiveFeed` had a single shared
+`lastMessageMs` timestamp. The SDK muxes all subscriptions (trades, deltas,
+candles, account, mark) into one WS URL — any stream ticking on that
+connection reset the shared timestamp, preventing the watchdog from firing
+even when trades/deltas were frozen. `mark` (REST poll) was writing, but the
+*WS* streams were silently dead and the watchdog never triggered because
+*something* (the WS itself, keepalive frames, or another sub) was keeping the
+shared timer alive.
 
-**Subtle bug almost made.** First restart attempt missed `NETWORK=mainnet`
-(it's not in `.env`, which has `NETWORK=devnet`); recorder briefly wrote 3
-minutes of devnet data into `data/devnet/`. Caught from the log's
-`wss://zo-devnet…` URL and re-started immediately. `data/devnet/` left in
-place (tiny, harmless); consider removing.
+**Fix (commit 56e76d1 `fix(feed): per-stream liveness watchdog`).** Replaced
+`private lastMessageMs` with `private readonly streamLastMs = new Map<string,
+number>()`. Watchdog only tracks "fast" streams (`trades`, `deltas`) that
+tick multiple times/sec in active markets. Candles (≥60s), account and
+liquidation subs excluded to avoid false reconnects on legitimate silence.
+First confirmed correct fire: 15:47 UTC, stream name "trades" in log,
+reconnect in 1s.
 
-**Still open — root cause of the 2026-06-19 silent WS death.** The
-liveness-timeout + reconnect logic from `scripts/ws/probe.py` is supposed to
-catch exactly this. It didn't. Hypotheses to check next time we get a
-reproduction:
-1. Liveness timer was disarmed / shared across streams and one healthy stream
-   (`mark`) reset it for everyone.
-2. Reconnect was attempted but failed silently (no error log).
-3. Mainnet WS server-side state diverged; client kept its socket but engine
-   stopped pushing.
+**Restart details.** Killed tmux, `git pull` (9 commits behind), restarted
+with `NETWORK=mainnet` in `.env` (was devnet — now fixed permanently by
+scp-ing local `.env` with `SOLANA_RPC_MAINNET` + `NETWORK=mainnet` to VPS).
+Books resynced at mainnet depths. **First restart briefly wrote 3 min of
+devnet data into `data/devnet/`** before catching the wrong `wss://zo-devnet…`
+URL; re-started; devnet dir left in place (harmless).
 
-**Operational hardening (deferred, but cheap):**
-- Heartbeat alert: last `trade/<sym>` parquet mtime > 10 min old → ping.
-- Promote tmux launch to a systemd unit (vps-workflow item #1) so a hard
-  process crash auto-restarts even when the recorder *is* dead.
-- Move `NETWORK=mainnet` into the recorder launch script so a future restart
-  can't silently switch networks.
+**Impact on MM calibration.** Today's HYPE microstructure run reused
+2026-06-18 data — parity preserved. **Multi-day stability** is now *unblocked*
+but needs 3-5 days of fresh capture before any live capital.
 
-**Impact on MM calibration.** Today's HYPE microstructure run reuses
-2026-06-18 Asia/EU/US windows alongside ETH — parity preserved. **Multi-day
-stability** follow-up from `minds.md` (2026-06-24) is now *unblocked* but
-needs 3-5 days of fresh capture before any live capital.
+**Operational hardening (still deferred):**
+- Heartbeat alert: last `trade/<sym>` parquet mtime > 10 min → ping (Healthchecks.io).
+- Promote `recorder01` tmux to systemd unit (auto-restart on hard crash).
+- Add explicit `NETWORK=mainnet` assertion at recorder startup to prevent silent network switch.
 
 ## 2026-06-20 — Cross-venue lead-lag: how do we actually USE it? (open)
 

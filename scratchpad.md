@@ -1,5 +1,19 @@
 # Scratchpad — working notes
 
+## 2026-06-25 — Operational notes: VPS recorder state
+
+- **NETWORK** must be in `.env` (not just the launch command). VPS `.env` now has
+  `NETWORK=mainnet` + `SOLANA_RPC_MAINNET=<private>`. Scp'd from Mac with `!scp`.
+- **Recorder restart sequence:** kill tmux `recorder01` → `git pull` → verify `.env`
+  has `NETWORK=mainnet` → `tmux new -s recorder01` → `npm run record -- --markets ETHUSD,HYPEUSD --out /root/01_xyz/data`.
+- **WS watchdog fix (56e76d1):** per-stream Map. Fast streams (trades, deltas) only.
+  First live fire confirmed: stream="trades", reconnect in 1s.
+- **VPS memory budget:** ~297 MB free. duckdb CLI: `threads=1; memory_limit='256MB';
+  temp_directory='/root/tmp'`. Prune `dt <= yesterday` (open hourly file crashes duckdb).
+- **HYPE microstructure JSONs:** `research/output/mm_hype_2026-06-18/{asia,eu,us,base}.json`.
+- **mm-eth / mm-hype configs:** both `dryRun: true`. Run:
+  `npm run strategy -- --config examples/mm-eth.config.json`
+
 ## 2026-06-20 — Cross-venue lead-lag probe: what I found & how it ran
 
 ### What I found (the numbers)
