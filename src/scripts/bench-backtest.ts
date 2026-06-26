@@ -107,7 +107,7 @@ const memBefore = process.memoryUsage();
 const cpuBefore = process.cpuUsage();
 const t0 = performance.now();
 
-const report = await runBacktest(config, events, benchStrategy);
+const { report } = await runBacktest(config, events, benchStrategy);
 
 const elapsed = performance.now() - t0;
 const cpuAfter = process.cpuUsage(cpuBefore);

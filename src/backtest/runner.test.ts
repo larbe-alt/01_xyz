@@ -33,7 +33,7 @@ describe("runBacktest", () => {
       { kind: "trade", ts: 3000, trade: { side: "bid", price: 101, size: 1, ts: 3000 } },
     ]);
 
-    const report = await runBacktest(mkConfig(), events, noop);
+    const { report } = await runBacktest(mkConfig(), events, noop);
     assert.equal(report.aggregate.totalTrades, 0);
     assert.equal(report.aggregate.totalReturn, 0);
   });
@@ -60,7 +60,7 @@ describe("runBacktest", () => {
       { kind: "trade", ts: 3000, trade: { side: "bid", price: 106, size: 1, ts: 3000 } },
     ]);
 
-    const report = await runBacktest(mkConfig(), events, buyer);
+    const { report } = await runBacktest(mkConfig(), events, buyer);
     assert.equal(report.aggregate.totalTrades, 2);
     assert.ok(report.aggregate.totalReturn > 0);
     assert.ok(report.aggregate.totalFees > 0);
@@ -81,7 +81,7 @@ describe("runBacktest", () => {
       { kind: "delta", ts: 1500, bids: [[100, 0], [102, 5]], asks: [] },
     ]);
 
-    await runBacktest(mkConfig(), events, bookWatcher);
+    const { report: _r } = await runBacktest(mkConfig(), events, bookWatcher);
     assert.equal(bookEvents.length, 2);
     assert.equal(bookEvents[0], "TESTUSD:100/101");
     assert.equal(bookEvents[1], "TESTUSD:102/101");
@@ -102,7 +102,7 @@ describe("runBacktest", () => {
       { kind: "trade", ts: 5500, trade: { side: "ask", price: 100, size: 1, ts: 5500 } },
     ]);
 
-    await runBacktest(mkConfig({ tickMs: 1000 }), events, ticker);
+    const { report: _r } = await runBacktest(mkConfig({ tickMs: 1000 }), events, ticker);
     assert.ok(tickTimes.length >= 3);
     assert.equal(tickTimes[0], 5500);
     assert.equal(tickTimes[1], 5500);
@@ -124,7 +124,7 @@ describe("runBacktest", () => {
       { kind: "trade", ts: 42_000, trade: { side: "ask", price: 100, size: 1, ts: 42_000 } },
     ]);
 
-    await runBacktest(mkConfig(), events, spy);
+    const { report: _r } = await runBacktest(mkConfig(), events, spy);
     assert.equal(capturedTs, 42_000);
   });
 
@@ -140,7 +140,7 @@ describe("runBacktest", () => {
       { kind: "snapshot", ts: 1000, bids: [[100, 10]], asks: [[101, 10]] },
     ]);
 
-    await runBacktest(mkConfig(), events, strat);
+    const { report: _r } = await runBacktest(mkConfig(), events, strat);
     assert.ok(shutdownCalled);
   });
 
@@ -161,7 +161,7 @@ describe("runBacktest", () => {
       { kind: "trade", ts: 3000, trade: { side: "bid", price: 101, size: 1, ts: 3000 } },
     ]);
 
-    const report = await runBacktest(mkConfig(), events, crasher);
+    const { report } = await runBacktest(mkConfig(), events, crasher);
     assert.equal(callCount, 2);
     assert.ok(report.aggregate);
   });
@@ -198,7 +198,7 @@ describe("runBacktest", () => {
       { symbol: "BTCUSD", marketId: 2, event: { kind: "trade", ts: 2500, trade: { side: "ask", price: 65000, size: 0.1, ts: 2500 } } },
     ];
 
-    const report = await runBacktest(config, events, mm);
+    const { report } = await runBacktest(config, events, mm);
     assert.ok(report.perSymbol.length >= 1);
     assert.equal(report.aggregate.totalTrades, 2);
   });

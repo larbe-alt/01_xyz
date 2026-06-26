@@ -39,7 +39,7 @@ const events = await loadBacktestData(config);
 console.error(`Loaded ${events.length} events. Running backtest...`);
 
 const t0 = performance.now();
-const report = await runBacktest(config, events, strategy);
+const { report, trades } = await runBacktest(config, events, strategy);
 const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
 console.log(formatReport(report));
@@ -48,5 +48,6 @@ console.error(`\nCompleted in ${elapsed}s (${events.length} events)`);
 const outDir = path.join("results", `bt_${Date.now()}`);
 mkdirSync(outDir, { recursive: true });
 writeFileSync(path.join(outDir, "report.json"), toJSON(report));
+writeFileSync(path.join(outDir, "trades.json"), JSON.stringify(trades, null, 2));
 writeFileSync(path.join(outDir, "config.json"), JSON.stringify(config, null, 2));
 console.error(`Results saved to ${outDir}/`);

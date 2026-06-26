@@ -7,7 +7,7 @@ import {
   SimPositions,
   SimBalances,
 } from "../sim/adapters.js";
-import { PnLEngine } from "./pnl.js";
+import { PnLEngine, type TradeRecord } from "./pnl.js";
 import { computeMetrics, type FullReport } from "./metrics.js";
 import { SimFeedSource } from "./feed.js";
 import { RiskGuard } from "../risk/guard.js";
@@ -50,11 +50,16 @@ export async function loadBacktestData(config: BacktestConfig): Promise<Backtest
   return all;
 }
 
+export interface BacktestResult {
+  report: FullReport;
+  trades: readonly TradeRecord[];
+}
+
 export async function runBacktest(
   config: BacktestConfig,
   events: BacktestEvent[],
   strategy: Strategy<any>,
-): Promise<FullReport> {
+): Promise<BacktestResult> {
   if (events.length === 0) {
     throw new Error("No events — check data directory and market symbols");
   }
@@ -197,7 +202,8 @@ export async function runBacktest(
   // ── Shutdown ──────────────────────────────────────────────────────────────
   await callHook(() => strategy.shutdown?.(ctx));
 
-  return computeMetrics(pnl.equityCurve(), pnl.trades(), pnl.funding(), pnl.stats());
+  const report = computeMetrics(pnl.equityCurve(), pnl.trades(), pnl.funding(), pnl.stats());
+  return { report, trades: pnl.trades() };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
