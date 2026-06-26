@@ -8,7 +8,7 @@
  * matching the live LocalBook semantics (src/data/feed.ts) — so we setLevel(), not
  * add a signed increment.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import duckdb from "duckdb";
 import type { Side, MarketTrade } from "../types.js";
@@ -22,6 +22,37 @@ export interface LoadOptions {
   dir: string; // baseDir, e.g. "data"
   env: string; // "mainnet" | "devnet"
   market: string; // "ETHUSD"
+  /** If set, skip parquet files that are wholly before this timestamp (ms). */
+  fromMs?: number;
+  /** If set, skip parquet files that start after this timestamp (ms). */
+  toMs?: number;
+}
+
+const BUCKET_MS = 5 * 60 * 1000;
+const FNAME_RE = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})\.parquet$/;
+
+function fileStartMs(fname: string): number | null {
+  const m = FNAME_RE.exec(fname);
+  if (!m) return null;
+  return Date.parse(`${m[1]}T${m[2]}:${m[3]}:00Z`);
+}
+
+/** Return sorted list of parquet files whose 5-min bucket overlaps [fromMs-padMs, toMs]. */
+function filterFiles(dir: string, fromMs: number | undefined, toMs: number | undefined, padMs = 0): string[] {
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".parquet"))
+    .sort();
+  if (fromMs == null && toMs == null) return files.map((f) => path.join(dir, f));
+  return files
+    .filter((f) => {
+      const t = fileStartMs(f);
+      if (t == null) return true;
+      if (fromMs != null && t + BUCKET_MS < fromMs - padMs) return false;
+      if (toMs != null && t > toMs) return false;
+      return true;
+    })
+    .map((f) => path.join(dir, f));
 }
 
 function all(db: duckdb.Database, sql: string): Promise<any[]> {
@@ -39,26 +70,32 @@ function parseLevels(s: unknown): [number, number][] {
   }
 }
 
-export async function loadNative01Market(opts: LoadOptions): Promise<Native01Event[]> {
-  const { dir, env, market } = opts;
-  const streamDir = (s: string) => path.join(dir, env, s, market);
-  const glob = (s: string) => `${streamDir(s).replace(/'/g, "''")}/*.parquet`;
+function filelist(files: string[]): string {
+  if (files.length === 0) return "";
+  if (files.length === 1) return `'${files[0].replace(/'/g, "''")}'`;
+  return `[${files.map((f) => `'${f.replace(/'/g, "''")}'`).join(", ")}]`;
+}
 
-  const present = (["snapshot", "delta", "trade"] as const).filter((s) => existsSync(streamDir(s)));
-  if (!present.includes("snapshot")) throw new Error(`no snapshot data at ${streamDir("snapshot")}`);
+export async function loadNative01Market(opts: LoadOptions): Promise<Native01Event[]> {
+  const { dir, env, market, fromMs, toMs } = opts;
+  const streamDir = (s: string) => path.join(dir, env, s, market);
+
+  const snapshotFiles = filterFiles(streamDir("snapshot"), fromMs, toMs, 2 * 60 * 60 * 1000);
+  if (snapshotFiles.length === 0) throw new Error(`no snapshot data at ${streamDir("snapshot")}`);
+  const deltaFiles = filterFiles(streamDir("delta"), fromMs, toMs, 2 * 60 * 60 * 1000);
+  const tradeFiles = filterFiles(streamDir("trade"), fromMs, toMs, 0);
 
   const parts: string[] = [];
-  if (present.includes("snapshot"))
+  parts.push(
+    `SELECT 'snapshot' AS kind, ts, ts_local, bids, asks, NULL::VARCHAR AS side, NULL::DOUBLE AS price, NULL::DOUBLE AS size FROM read_parquet(${filelist(snapshotFiles)})`,
+  );
+  if (deltaFiles.length > 0)
     parts.push(
-      `SELECT 'snapshot' AS kind, ts, ts_local, bids, asks, NULL::VARCHAR AS side, NULL::DOUBLE AS price, NULL::DOUBLE AS size FROM read_parquet('${glob("snapshot")}')`,
+      `SELECT 'delta' AS kind, ts, ts_local, bids, asks, NULL, NULL, NULL FROM read_parquet(${filelist(deltaFiles)})`,
     );
-  if (present.includes("delta"))
+  if (tradeFiles.length > 0)
     parts.push(
-      `SELECT 'delta' AS kind, ts, ts_local, bids, asks, NULL, NULL, NULL FROM read_parquet('${glob("delta")}')`,
-    );
-  if (present.includes("trade"))
-    parts.push(
-      `SELECT 'trade' AS kind, ts, ts_local, NULL, NULL, side, price, size FROM read_parquet('${glob("trade")}')`,
+      `SELECT 'trade' AS kind, ts, ts_local, NULL, NULL, side, price, size FROM read_parquet(${filelist(tradeFiles)})`,
     );
 
   const db = new duckdb.Database(":memory:");

@@ -35,6 +35,8 @@ export async function loadBacktestData(config: BacktestConfig): Promise<Backtest
       dir: config.data.dir,
       env: config.data.env,
       market: mkt.symbol,
+      fromMs: config.data.from,
+      toMs: config.data.to,
     });
     let filtered = events;
     if (config.data.from != null) filtered = filtered.filter((e) => e.ts >= config.data.from!);
