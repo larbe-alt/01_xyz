@@ -87,12 +87,11 @@ export class LiveFeed extends EventEmitter {
     this.baseReconnectDelayMs = cfg.baseReconnectDelayMs ?? 1_000;
     this.maxReconnectDelayMs = cfg.maxReconnectDelayMs ?? 30_000;
 
-    // Only "fast" streams (trades, deltas) gate the watchdog: an active market
-    // ticks both several times/sec. Candle ticks once per bar (≥ 60s), account
-    // and liquidation are episodic — including them would trip false reconnects
-    // on legitimate silence.
+    // Only deltas gate the liveness watchdog. Deltas arrive continuously on any
+    // active book (every order placement/cancel), so silence genuinely signals a
+    // dead connection. Trades are episodic — quiet markets can go minutes without
+    // a fill, so gating on trades would trigger false reconnects.
     const watchdog: string[] = [];
-    if (trades?.length) watchdog.push("trades");
     if (deltas?.length) watchdog.push("deltas");
     this.watchdogStreams = watchdog;
   }
