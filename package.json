@@ -21,6 +21,7 @@
     "verify:sim:01": "tsx src/scripts/verify-sim-01.ts",
     "backtest": "tsx src/scripts/backtest.ts",
     "bench:backtest": "tsx src/scripts/bench-backtest.ts",
+    "bench:latency": "tsx src/scripts/bench-latency.ts",
     "microprice": "tsx src/scripts/microprice-fit.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
