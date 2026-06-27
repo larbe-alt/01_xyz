@@ -257,6 +257,12 @@ export class LiveFeed extends EventEmitter {
 
     setTimeout(() => {
       if (this.closed) return;
+      // Release the in-flight guard as the scheduled attempt begins. If this
+      // attempt fails before reaching "connected" (e.g. a sustained 502 storm),
+      // scheduleReconnect() must be able to re-arm the next attempt. Without
+      // this, `reconnecting` latches true forever and the feed dies silently
+      // until manual restart — the 2026-06-26 22h WS-death outage.
+      this.reconnecting = false;
       this.generation++;
       for (const book of this.books.values()) book.synced = false;
       this.deltaBuffers.clear();
