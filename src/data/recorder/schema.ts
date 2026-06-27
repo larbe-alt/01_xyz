@@ -1,12 +1,28 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface BaseRecord {
   v: number;
   stream: string;
   symbol: string;
   market_id: number;
+  /**
+   * Receive clock: Date.now() at the instant we ingested the event locally.
+   * This is the ONE coherent ordering key across every stream — a faithful
+   * replay/sim must process events in the order the bot actually observed
+   * them (it can never react before it has received an event). Ordering by
+   * exchange time instead would inject look-ahead bias, since a delta's
+   * exchange instant precedes when we hold it. Use `update_id` for exact
+   * book sequencing within a stream.
+   */
   ts: number;
-  ts_local: number;
+  /**
+   * Exchange event time (ms since epoch) where the protocol provides it —
+   * trades (`physical_time`) and candles (`t`). null for streams the exchange
+   * does not timestamp: delta (book diffs carry only `update_id`), locally
+   * synthesized snapshots, and REST-polled marks. Feed latency for trades =
+   * `ts - ts_exchange`.
+   */
+  ts_exchange: number | null;
 }
 
 export interface TradeRecord extends BaseRecord {
@@ -61,29 +77,29 @@ export type StreamType = AnyRecord["stream"];
 export const DUCKDB_COLUMNS: Record<StreamType, string> = {
   trade: `{
     v: 'UTINYINT', stream: 'VARCHAR', symbol: 'VARCHAR', market_id: 'UINTEGER',
-    ts: 'DOUBLE', ts_local: 'DOUBLE',
+    ts: 'DOUBLE', ts_exchange: 'DOUBLE',
     trade_id: 'DOUBLE', action_id: 'DOUBLE', side: 'VARCHAR',
     price: 'DOUBLE', size: 'DOUBLE'
   }`,
   delta: `{
     v: 'UTINYINT', stream: 'VARCHAR', symbol: 'VARCHAR', market_id: 'UINTEGER',
-    ts: 'DOUBLE', ts_local: 'DOUBLE',
+    ts: 'DOUBLE', ts_exchange: 'DOUBLE',
     update_id: 'DOUBLE', last_update_id: 'DOUBLE',
     bids: 'VARCHAR', asks: 'VARCHAR'
   }`,
   snapshot: `{
     v: 'UTINYINT', stream: 'VARCHAR', symbol: 'VARCHAR', market_id: 'UINTEGER',
-    ts: 'DOUBLE', ts_local: 'DOUBLE',
+    ts: 'DOUBLE', ts_exchange: 'DOUBLE',
     update_id: 'DOUBLE', bids: 'VARCHAR', asks: 'VARCHAR'
   }`,
   candle: `{
     v: 'UTINYINT', stream: 'VARCHAR', symbol: 'VARCHAR', market_id: 'UINTEGER',
-    ts: 'DOUBLE', ts_local: 'DOUBLE',
+    ts: 'DOUBLE', ts_exchange: 'DOUBLE',
     resolution: 'VARCHAR', o: 'DOUBLE', h: 'DOUBLE', l: 'DOUBLE', c: 'DOUBLE', vol: 'DOUBLE'
   }`,
   mark: `{
     v: 'UTINYINT', stream: 'VARCHAR', symbol: 'VARCHAR', market_id: 'UINTEGER',
-    ts: 'DOUBLE', ts_local: 'DOUBLE',
+    ts: 'DOUBLE', ts_exchange: 'DOUBLE',
     index_price: 'DOUBLE', mark_price: 'DOUBLE', funding_rate: 'DOUBLE',
     next_funding_time: 'VARCHAR', open_interest: 'DOUBLE'
   }`,

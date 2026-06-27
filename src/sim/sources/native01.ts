@@ -87,20 +87,20 @@ export async function loadNative01Market(opts: LoadOptions): Promise<Native01Eve
 
   const parts: string[] = [];
   parts.push(
-    `SELECT 'snapshot' AS kind, ts, ts_local, bids, asks, NULL::VARCHAR AS side, NULL::DOUBLE AS price, NULL::DOUBLE AS size FROM read_parquet(${filelist(snapshotFiles)})`,
+    `SELECT 'snapshot' AS kind, ts, bids, asks, NULL::VARCHAR AS side, NULL::DOUBLE AS price, NULL::DOUBLE AS size FROM read_parquet(${filelist(snapshotFiles)})`,
   );
   if (deltaFiles.length > 0)
     parts.push(
-      `SELECT 'delta' AS kind, ts, ts_local, bids, asks, NULL, NULL, NULL FROM read_parquet(${filelist(deltaFiles)})`,
+      `SELECT 'delta' AS kind, ts, bids, asks, NULL, NULL, NULL FROM read_parquet(${filelist(deltaFiles)})`,
     );
   if (tradeFiles.length > 0)
     parts.push(
-      `SELECT 'trade' AS kind, ts, ts_local, NULL, NULL, side, price, size FROM read_parquet(${filelist(tradeFiles)})`,
+      `SELECT 'trade' AS kind, ts, NULL, NULL, side, price, size FROM read_parquet(${filelist(tradeFiles)})`,
     );
 
   const db = new duckdb.Database(":memory:");
   try {
-    const rows = await all(db, `${parts.join(" UNION ALL ")} ORDER BY ts, ts_local`);
+    const rows = await all(db, `${parts.join(" UNION ALL ")} ORDER BY ts`);
     const events: Native01Event[] = [];
     for (const r of rows) {
       const ts = Number(r.ts);

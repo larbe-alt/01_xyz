@@ -59,7 +59,7 @@ export class ReplayFeed extends EventEmitter {
     if (from != null) filters.push(`ts >= ${from}`);
     if (to != null) filters.push(`ts <= ${to}`);
     if (filters.length) sql += ` WHERE ${filters.join(" AND ")}`;
-    sql += ` ORDER BY ts, ts_local`;
+    sql += ` ORDER BY ts`;
 
     log.info("Replaying", { globs: globs.length, from, to, speed });
     this.emit("connected");

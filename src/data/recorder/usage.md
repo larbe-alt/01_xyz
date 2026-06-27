@@ -136,11 +136,11 @@ import { closeSharedDb } from "./data/recorder/writers.js";
 
 const recorder = new Recorder(nord, feed, {
   markets: ["BTC-PERP", "ETH-PERP"],
-  streams: ["trade", "delta", "snapshot", "candle", "mark"],
+  streams: ["trade", "delta", "snapshot", "mark"],  // candle omitted by default
   baseDir: "./data",
   env: "devnet",
   rotationMs:        5 * 60_000,  // 5-min Parquet files
-  markPollMs:           10_000,   // poll mark/funding every 10s
+  markPollMs:            2_000,   // poll mark/funding every 2s
   snapshotIntervalMs:   60_000,   // full book snapshot every 60s
   snapshotDepth:            50,   // top-50 levels per side
 });
@@ -157,19 +157,26 @@ Every record shares a common envelope:
 
 | Field       | Type     | Description                                              |
 |-------------|----------|----------------------------------------------------------|
-| `v`         | `number` | Schema version (currently `1`)                           |
-| `stream`    | `string` | `"trade"`, `"delta"`, `"snapshot"`, `"candle"`, `"mark"` |
-| `symbol`    | `string` | Market symbol e.g. `"BTC-PERP"`                         |
-| `market_id` | `number` | Numeric market ID                                        |
-| `ts`        | `number` | Primary ordering timestamp (ms since epoch)              |
-| `ts_local`  | `number` | Local capture time (ms since epoch)                      |
+| `v`           | `number`          | Schema version (currently `2`)                           |
+| `stream`      | `string`          | `"trade"`, `"delta"`, `"snapshot"`, `"candle"`, `"mark"` |
+| `symbol`      | `string`          | Market symbol e.g. `"BTC-PERP"`                         |
+| `market_id`   | `number`          | Numeric market ID                                        |
+| `ts`          | `number`          | Receive clock — `Date.now()` at local ingest (ms)        |
+| `ts_exchange` | `number \| null`  | Exchange event time (ms), or `null` if unavailable       |
 
-`ts` source by stream:
+**`ts` is the single coherent ordering key across all streams** — it is the
+receive clock, i.e. the order in which the bot actually observed events. A
+faithful replay/sim must process in this order (it can never react before it
+has received an event); ordering by exchange time would inject look-ahead bias.
+Use `update_id` for exact book sequencing within the delta/snapshot streams.
+
+`ts_exchange` source by stream:
 - **trade** — server `physical_time` parsed to ms (true exchange time)
 - **candle** — candle open time (`t * 1000`)
-- **delta, snapshot, mark** — `Date.now()` at capture (no server timestamp available)
+- **delta, snapshot, mark** — `null` (exchange provides no timestamp; deltas
+  carry only `update_id`, snapshots are synthesized locally, marks are REST-polled)
 
-`ts_local - ts` for trades = feed latency.
+`ts - ts_exchange` for trades = feed latency.
 
 ### Per-stream fields
 

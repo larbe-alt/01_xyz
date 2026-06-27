@@ -12,12 +12,13 @@ const log = createLogger("record");
 
 const VALID_STREAMS = new Set<StreamType>(["trade", "delta", "snapshot", "candle", "mark"]);
 
-function parseArgs(): { markets: string[]; streams: StreamType[]; outDir: string; rotationMin: number } {
+function parseArgs(): { markets: string[]; streams: StreamType[]; outDir: string; rotationMin: number; markPollSec: number } {
   const args = process.argv.slice(2);
   let markets: string[] = [];
   let streams: StreamType[] = [];
   let outDir = "./data";
   let rotationMin = 5;
+  let markPollSec = 2;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -37,6 +38,9 @@ function parseArgs(): { markets: string[]; streams: StreamType[]; outDir: string
       case "-r":
         rotationMin = Number(args[++i]);
         break;
+      case "--mark-poll-sec":
+        markPollSec = Number(args[++i]);
+        break;
       default:
         log.error("Unknown arg", { arg: args[i] });
         process.exit(1);
@@ -48,7 +52,8 @@ function parseArgs(): { markets: string[]; streams: StreamType[]; outDir: string
     process.exit(1);
   }
   if (streams.length === 0) {
-    streams = ["trade", "delta", "snapshot", "candle", "mark"];
+    // candle omitted by default: OHLCV is reconstructable from the trade stream.
+    streams = ["trade", "delta", "snapshot", "mark"];
   }
   for (const s of streams) {
     if (!VALID_STREAMS.has(s)) {
@@ -56,15 +61,19 @@ function parseArgs(): { markets: string[]; streams: StreamType[]; outDir: string
       process.exit(1);
     }
   }
+  if (!Number.isFinite(markPollSec) || markPollSec <= 0) {
+    log.error("--mark-poll-sec must be a positive number", { markPollSec });
+    process.exit(1);
+  }
 
-  return { markets, streams, outDir, rotationMin };
+  return { markets, streams, outDir, rotationMin, markPollSec };
 }
 
 async function main() {
-  const { markets, streams, outDir, rotationMin } = parseArgs();
+  const { markets, streams, outDir, rotationMin, markPollSec } = parseArgs();
   const cfg = getConfig();
 
-  log.info("Starting recorder", { network: cfg.network, markets, streams, outDir, rotationMin });
+  log.info("Starting recorder", { network: cfg.network, markets, streams, outDir, rotationMin, markPollSec });
 
   const nord = await getNord();
   await initMarkets(nord);
@@ -87,6 +96,7 @@ async function main() {
     baseDir: outDir,
     env: cfg.network,
     rotationMs: rotationMin * 60_000,
+    markPollMs: markPollSec * 1000,
   });
 
   feed.on("connected", () => log.info("Feed connected"));

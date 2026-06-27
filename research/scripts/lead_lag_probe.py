@@ -2,7 +2,7 @@
 Cross-venue lead-lag probe: does Binance price discovery lead 01 Exchange?
 
 Method:
-  1. Build a mid-price series for 01 from snapshot+delta replay (ts_local clock).
+  1. Build a mid-price series for 01 from snapshot+delta replay (ts receive clock).
   2. Build a grid-resampled mid series for Binance from book_ticker (recv_ms clock),
      downsampled IN SQL so only ~MBs leave duckdb (VPS-safe).
   3. Both recorders run on the same VPS → clocks are co-located → no NTP skew.
@@ -44,7 +44,7 @@ from src.data import load_events, replay_book
 # ---------------------------------------------------------------------------
 
 def _build_01_mid_series(data_dir: str, env: str, symbol: str) -> pl.DataFrame:
-    """Replay 01 parquet snapshot+delta → (ts_local ms, mid) series."""
+    """Replay 01 parquet snapshot+delta → (ts ms, mid) series."""
     events = load_events(data_dir, env, symbol)
     rows: list[tuple[int, float]] = []
     for book, ev in replay_book(events):

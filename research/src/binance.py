@@ -12,7 +12,7 @@ Schema (perpl Arrow/parquet):
                        ask (f64), ask_qty (f64), at_ms (i64)
 
 Normalisation applied here (not at the analysis layer):
-  - recv_ns  → recv_ms  (i64, ns ÷ 1_000_000)  — aligns with 01's ts_local (ms)
+  - recv_ns  → recv_ms  (i64, ns ÷ 1_000_000)  — aligns with 01's ts receive clock (ms)
   - side "buy" → "bid", "sell" → "ask"          — aligns with 01's trade side vocab
   - qty kept as-is (caller can rename to size if needed)
 
